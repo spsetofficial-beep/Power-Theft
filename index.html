@@ -288,6 +288,15 @@
       gap: 24px;
       flex-wrap: wrap;
     }
+    .duration-badge {
+      display: inline-block;
+      background: #e8f0fe;
+      color: #2c7da0;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-size: 0.7rem;
+      margin-left: 8px;
+    }
     @media (max-width: 900px) {
       body { padding: 16px; }
       .two-columns { flex-direction: column; }
@@ -300,7 +309,7 @@
   <div class="header">
     <div class="title-section">
       <h1><i class="fas fa-shield-hornet"></i> PowerGuardian · Theft Sentinel</h1>
-      <p style="color:#4b6f86; margin-top: 6px;">Real‑time differential monitoring + structured fault log table</p>
+      <p style="color:#4b6f86; margin-top: 6px;">Real‑time differential monitoring + unique theft event logging</p>
     </div>
     <div class="badge-status">
       <span class="live-dot"></span>
@@ -362,15 +371,16 @@
                 <th><i class="fas fa-microchip"></i> P1 Power (W)</th>
                 <th><i class="fas fa-plug"></i> P2 Power (W)</th>
                 <th><i class="fas fa-exclamation-triangle"></i> Status</th>
+                <th><i class="fas fa-hourglass-half"></i> Duration</th>
               </tr>
             </thead>
             <tbody id="faultTableBody">
-              <tr><td colspan="5" class="empty-table-msg"><i class="fas fa-database"></i> No theft events recorded yet</td></tr>
+              <tr><td colspan="6" class="empty-table-msg"><i class="fas fa-database"></i> No theft events recorded yet</td></tr>
             </tbody>
           </table>
         </div>
         <div style="padding: 12px 1.5rem 1rem; border-top: 1px solid #eff3f8; font-size: 0.7rem; color:#7c95ae; display: flex; justify-content: space-between;">
-          <span><i class="fas fa-history"></i> Last 200 events stored</span>
+          <span><i class="fas fa-check-circle"></i> Each theft logged only ONCE when detected</span>
           <span><i class="fas fa-sync-alt"></i> Auto-sync with Firebase</span>
         </div>
       </div>
@@ -379,7 +389,7 @@
   <div class="footer-note">
     <span><i class="fas fa-microchip"></i> ESP32 + Firebase RTDB</span>
     <span><i class="fas fa-charging-station"></i> Threshold: 100W diff >5s → theft alarm</span>
-    <span><i class="fas fa-table"></i> Fault table logs every theft with exact timestamp & values</span>
+    <span><i class="fas fa-ban"></i> Duplicate prevention: One log per theft event</span>
   </div>
 </div>
 
@@ -411,8 +421,11 @@
   const clearBtn = document.getElementById('clearLogBtn');
   const exportBtn = document.getElementById('exportTableBtn');
 
-  // ---------- FAULT LOG MANAGEMENT (TABLE DATA) ----------
-  let theftLogs = [];      // array of log objects: { id, timestamp, dateStr, diff, p1, p2 }
+  // ---------- FAULT LOG MANAGEMENT WITH DEDUPLICATION ----------
+  let theftLogs = [];           // Array of unique theft events
+  let activeTheftId = null;    // Track currently active theft event ID
+  let theftStartTime = null;    // Track when current theft started
+  let currentTheftData = null;  // Store data for active theft
 
   // Helper: format numbers
   function formatVoltage(v) { return (v !== undefined && !isNaN(v)) ? v.toFixed(1) : '---'; }
@@ -422,13 +435,12 @@
   // Persist logs to localStorage & Firebase backup
   function persistLogs() {
     localStorage.setItem('powerTheftLogs_Table', JSON.stringify(theftLogs));
-    // Backup to Firebase RTDB (optional)
     if (database) {
       database.ref('/theft_logs_table').set(theftLogs.slice(-200)).catch(err => console.warn("FB backup error", err));
     }
   }
 
-  // Load logs from localStorage + fallback from Firebase
+  // Load logs from localStorage
   async function loadLogsFromStorage() {
     const local = localStorage.getItem('powerTheftLogs_Table');
     if (local) {
@@ -437,7 +449,6 @@
         if (!Array.isArray(theftLogs)) theftLogs = [];
       } catch(e) { theftLogs = []; }
     } else {
-      // try fetch from Firebase /theft_logs_table
       try {
         const snapshot = await database.ref('/theft_logs_table').once('value');
         if (snapshot.exists()) {
@@ -453,18 +464,26 @@
     renderTable();
   }
 
+  // Format duration from milliseconds
+  function formatDuration(ms) {
+    if (!ms) return '—';
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainSec = seconds % 60;
+    return `${minutes}m ${remainSec}s`;
+  }
+
   // Render table from theftLogs array (newest first)
   function renderTable() {
     if (!faultTableBody) return;
     if (!theftLogs.length) {
-      faultTableBody.innerHTML = '<tr><td colspan="5" class="empty-table-msg"><i class="fas fa-database"></i> No theft events recorded yet</td></tr>';
+      faultTableBody.innerHTML = '<tr><td colspan="6" class="empty-table-msg"><i class="fas fa-database"></i> No theft events recorded yet</td></tr>';
       return;
     }
     const fragment = document.createDocumentFragment();
-    // Show newest first (already unshifted when adding)
     theftLogs.forEach(log => {
       const row = document.createElement('tr');
-      // Format diff with highlight style
       const diffValue = typeof log.diff === 'number' ? log.diff.toFixed(1) : log.diff;
       row.innerHTML = `
         <td style="white-space: nowrap;"><i class="far fa-clock"></i> ${escapeHtml(log.dateStr)}</td>
@@ -472,6 +491,7 @@
         <td>${log.p1} W</td>
         <td>${log.p2} W</td>
         <td><span class="theft-badge-table"><i class="fas fa-bolt"></i> THEFT DETECTED</span></td>
+        <td>${log.duration ? formatDuration(log.duration) : '—'}</td>
       `;
       fragment.appendChild(row);
     });
@@ -479,11 +499,12 @@
     faultTableBody.appendChild(fragment);
   }
 
-  // Add new theft event (called when theft flag changes from false -> true)
-  function addTheftLogEntry(powerDiff, p1, p2) {
+  // Add new theft event (called ONLY when theft starts, not during active theft)
+  function addUniqueTheftEntry(powerDiff, p1, p2) {
     const now = new Date();
     const timestamp = now.getTime();
     const dateStr = now.toLocaleString('en-IN', { hour12: false });
+    
     const newLog = {
       id: timestamp,
       timestamp: timestamp,
@@ -491,13 +512,27 @@
       diff: typeof powerDiff === 'number' ? parseFloat(powerDiff.toFixed(1)) : parseFloat(powerDiff),
       p1: typeof p1 === 'number' ? Math.round(p1) : p1,
       p2: typeof p2 === 'number' ? Math.round(p2) : p2,
+      duration: null,  // Will be updated when theft ends
+      endTime: null
     };
-    // Insert at beginning (newest first)
+    
     theftLogs.unshift(newLog);
-    // Keep max 200 logs
     if (theftLogs.length > 200) theftLogs = theftLogs.slice(0, 200);
     persistLogs();
     renderTable();
+    return newLog.id;
+  }
+
+  // Update duration for a theft event when it ends
+  function updateTheftDuration(theftId, endTimestamp) {
+    const logIndex = theftLogs.findIndex(log => log.id === theftId);
+    if (logIndex !== -1 && theftLogs[logIndex].duration === null) {
+      const duration = endTimestamp - theftLogs[logIndex].timestamp;
+      theftLogs[logIndex].duration = duration;
+      theftLogs[logIndex].endTime = endTimestamp;
+      persistLogs();
+      renderTable();
+    }
   }
 
   function escapeHtml(str) { return String(str).replace(/[&<>]/g, function(m){if(m==='&') return '&amp;'; if(m==='<') return '&lt;'; if(m==='>') return '&gt;'; return m;}); }
@@ -506,6 +541,9 @@
   function clearLogs() {
     if (confirm('⚠️ Permanently delete ALL theft fault log entries?')) {
       theftLogs = [];
+      activeTheftId = null;
+      theftStartTime = null;
+      currentTheftData = null;
       persistLogs();
       renderTable();
     }
@@ -517,14 +555,15 @@
       alert('No fault logs to export.');
       return;
     }
-    const headers = ['Timestamp', 'Date & Time', 'Power Difference (W)', 'P1 Power (W)', 'P2 Power (W)', 'Status'];
+    const headers = ['Timestamp', 'Date & Time', 'Power Difference (W)', 'P1 Power (W)', 'P2 Power (W)', 'Status', 'Duration (seconds)'];
     const rows = theftLogs.map(log => [
       log.timestamp,
       log.dateStr,
       log.diff,
       log.p1,
       log.p2,
-      'THEFT_DETECTED'
+      'THEFT_DETECTED',
+      log.duration ? (log.duration / 1000).toFixed(1) : ''
     ]);
     const csvContent = [headers, ...rows].map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(',')).join('\n');
     const blob = new Blob(["\uFEFF" + csvContent], { type: 'text/csv;charset=utf-8;' });
@@ -538,13 +577,13 @@
     URL.revokeObjectURL(url);
   }
 
-  // ---------- THEFT STATE TRACKING (avoid duplicate consecutive entries) ----------
+  // ---------- THEFT STATE TRACKING WITH DEDUPLICATION ----------
   let previousTheftState = false;
-  let lastLoggedTheftId = null;
 
-  // Update dashboard UI and detect rising edge for theft logging
+  // Update dashboard UI and detect theft start/end (log ONLY on state change)
   function updateDashboardAndLog(snapshot) {
     if (!snapshot.exists()) return;
+    
     const p1Voltage = snapshot.child('PZEM1/Voltage').val();
     const p1Current = snapshot.child('PZEM1/Current').val();
     const p1Power = snapshot.child('PZEM1/Power').val();
@@ -566,6 +605,8 @@
     powerDiffSpan.innerHTML = diffVal.toFixed(1) + ' <span style="font-size:0.8rem;">W</span>';
 
     const isTheft = (theftFlag === true);
+    
+    // Update UI badge
     if (isTheft) {
       theftBadge.className = 'theft-badge theft-active';
       theftBadge.innerHTML = '<i class="fas fa-skull-crosswalk"></i> THEFT ACTIVE';
@@ -578,13 +619,32 @@
       document.querySelector('.alert-panel').style.borderLeft = '4px solid #2ecc71';
     }
 
-    // --- FAULT LOGGING ON RISING EDGE (theft becomes true) ---
+    // CRITICAL FIX: Log ONLY when theft state CHANGES from false to true
     if (isTheft && !previousTheftState) {
+      // THEFT STARTED - Log ONE entry
       const p1Val = (p1Power !== undefined && !isNaN(p1Power)) ? p1Power : 0;
       const p2Val = (p2Power !== undefined && !isNaN(p2Power)) ? p2Power : 0;
       const currentDiff = (powerDiff !== undefined && !isNaN(powerDiff)) ? parseFloat(powerDiff) : 0;
-      addTheftLogEntry(currentDiff, p1Val, p2Val);
+      
+      // Create unique log entry
+      activeTheftId = addUniqueTheftEntry(currentDiff, p1Val, p2Val);
+      theftStartTime = Date.now();
+      currentTheftData = { p1: p1Val, p2: p2Val, diff: currentDiff };
+      
+      console.log(`[THEFT START] Logged unique event ID: ${activeTheftId} at ${new Date().toLocaleString()}`);
+    } 
+    else if (!isTheft && previousTheftState) {
+      // THEFT ENDED - Update duration for the last theft event
+      if (activeTheftId) {
+        updateTheftDuration(activeTheftId, Date.now());
+        console.log(`[THEFT END] Updated duration for event ID: ${activeTheftId}`);
+        activeTheftId = null;
+        theftStartTime = null;
+        currentTheftData = null;
+      }
     }
+    
+    // Update previous state for next comparison
     previousTheftState = isTheft;
   }
 
@@ -594,7 +654,6 @@
     if (snapshot.exists()) {
       updateDashboardAndLog(snapshot);
     } else {
-      // Show waiting data on meters
       pzem1Voltage.innerHTML = '--<span class="unit">V</span>';
       pzem1Current.innerHTML = '--<span class="unit">A</span>';
       pzem1Power.innerHTML = '--<span class="unit">W</span>';
@@ -618,8 +677,7 @@
   // Load existing logs and init table
   loadLogsFromStorage();
 
-  // Add live timestamp hint
-  console.log("Fault Log Table ready — theft events will be recorded as table rows.");
+  console.log("Fault Log Table with DEDUPLICATION ready — each theft event logged only once");
 </script>
 </body>
 </html>
