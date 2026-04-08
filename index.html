@@ -1,0 +1,556 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+  <title>PowerGuardian | Theft Detection Dashboard</title>
+  <!-- Google Fonts + Font Awesome for crisp icons -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <!-- Firebase SDKs -->
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-database-compat.js"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: linear-gradient(145deg, #f0f4fa 0%, #e6ecf3 100%);
+      font-family: 'Inter', sans-serif;
+      padding: 24px 20px;
+      min-height: 100vh;
+      color: #1a2634;
+    }
+
+    /* main container */
+    .dashboard-container {
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* header section */
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 32px;
+      gap: 20px;
+    }
+
+    .title-section h1 {
+      font-size: 1.9rem;
+      font-weight: 700;
+      background: linear-gradient(135deg, #1e2b3c, #0f4c5f);
+      background-clip: text;
+      -webkit-background-clip: text;
+      color: transparent;
+      letter-spacing: -0.3px;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .title-section h1 i {
+      background: none;
+      color: #d9534f;
+      font-size: 2rem;
+      background-clip: unset;
+      -webkit-background-clip: unset;
+    }
+
+    .badge-status {
+      background: white;
+      padding: 8px 20px;
+      border-radius: 60px;
+      box-shadow: 0 8px 18px rgba(0,0,0,0.05);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 600;
+      backdrop-filter: blur(2px);
+    }
+
+    .live-dot {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background-color: #2ecc71;
+      box-shadow: 0 0 0 0 rgba(46,204,113,0.6);
+      animation: pulse-green 1.8s infinite;
+    }
+
+    @keyframes pulse-green {
+      0% { box-shadow: 0 0 0 0 rgba(46,204,113,0.5);}
+      70% { box-shadow: 0 0 0 8px rgba(46,204,113,0);}
+      100% { box-shadow: 0 0 0 0 rgba(46,204,113,0);}
+    }
+
+    /* cards grid */
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 26px;
+      margin-bottom: 32px;
+    }
+
+    .meter-card {
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(2px);
+      border-radius: 32px;
+      box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.12);
+      padding: 1.5rem 1.8rem;
+      transition: all 0.25s ease;
+      border: 1px solid rgba(255,255,255,0.6);
+    }
+
+    .meter-card:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 28px 40px -16px rgba(0, 0, 0, 0.2);
+    }
+
+    .card-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      border-bottom: 2px solid #eef2f8;
+      padding-bottom: 16px;
+      margin-bottom: 22px;
+    }
+
+    .card-header i {
+      font-size: 2.2rem;
+      color: #2c7da0;
+    }
+
+    .card-header h2 {
+      font-size: 1.7rem;
+      font-weight: 600;
+      color: #1e3b4a;
+    }
+
+    .meter-data {
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+    }
+
+    .data-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      border-bottom: 1px dashed #e2e8f0;
+      padding-bottom: 10px;
+    }
+
+    .data-label {
+      font-weight: 500;
+      color: #5b6f82;
+      font-size: 1rem;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .data-value {
+      font-weight: 700;
+      font-size: 1.55rem;
+      color: #1f2f3e;
+      letter-spacing: -0.5px;
+    }
+
+    .unit {
+      font-size: 0.85rem;
+      font-weight: 500;
+      color: #6c8ba0;
+      margin-left: 4px;
+    }
+
+    /* theft & diff panel */
+    .alert-panel {
+      background: white;
+      border-radius: 28px;
+      box-shadow: 0 16px 28px -8px rgba(0,0,0,0.08);
+      margin-bottom: 32px;
+      overflow: hidden;
+      transition: all 0.2s;
+    }
+
+    .theft-header {
+      padding: 1.2rem 2rem;
+      background: #f8fafd;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      border-bottom: 1px solid #e9edf2;
+    }
+
+    .theft-title {
+      font-weight: 700;
+      font-size: 1.4rem;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .diff-big {
+      font-size: 1.7rem;
+      font-weight: 800;
+      font-family: monospace;
+      background: #eef2f9;
+      padding: 6px 16px;
+      border-radius: 48px;
+    }
+
+    .theft-status-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.2rem 2rem;
+      background: #ffffff;
+    }
+
+    .theft-indicator {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .theft-badge {
+      padding: 10px 28px;
+      border-radius: 60px;
+      font-weight: 700;
+      font-size: 1.2rem;
+      letter-spacing: 0.5px;
+      transition: 0.2s;
+    }
+
+    .safe {
+      background: #dff9e6;
+      color: #1f8a4c;
+      border-left: 5px solid #2ecc71;
+    }
+
+    .theft-active {
+      background: #ffe1df;
+      color: #c0392b;
+      border-left: 5px solid #e74c3c;
+      animation: softPulse 1s infinite alternate;
+    }
+
+    @keyframes softPulse {
+      0% { background: #ffe1df; }
+      100% { background: #ffc9c5; }
+    }
+
+    .alert-message {
+      font-weight: 500;
+    }
+
+    /* footer */
+    .footer-note {
+      text-align: center;
+      margin-top: 28px;
+      font-size: 0.8rem;
+      color: #6c86a0;
+      border-top: 1px solid #dce5ef;
+      padding-top: 20px;
+      display: flex;
+      justify-content: center;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    /* responsive */
+    @media (max-width: 720px) {
+      body { padding: 16px; }
+      .data-value { font-size: 1.3rem; }
+      .theft-header { flex-direction: column; gap: 12px; align-items: flex-start; }
+    }
+
+    /* loader shimmer */
+    .loading-shimmer {
+      background: linear-gradient(90deg, #f0f2f5 25%, #e9ecef 50%, #f0f2f5 75%);
+      background-size: 200% 100%;
+      animation: loading 1.2s infinite;
+      border-radius: 20px;
+      height: 28px;
+      width: 80px;
+    }
+
+    @keyframes loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+  </style>
+</head>
+<body>
+<div class="dashboard-container">
+  <div class="header">
+    <div class="title-section">
+      <h1><i class="fas fa-bolt"></i> PowerGuardian · Theft Sentinel</h1>
+      <p style="color:#4b6f86; margin-top: 8px;">Real‑time differential monitoring | ESP32 + PZEM004T</p>
+    </div>
+    <div class="badge-status">
+      <span class="live-dot"></span>
+      <span>LIVE SYNC</span>
+      <i class="fas fa-firebase" style="color:#ffa000;"></i>
+    </div>
+  </div>
+
+  <!-- Two meter cards -->
+  <div class="cards-grid">
+    <!-- PZEM 1 card -->
+    <div class="meter-card">
+      <div class="card-header">
+        <i class="fas fa-microchip"></i>
+        <h2>PZEM-1 · MAIN LINE</h2>
+      </div>
+      <div class="meter-data">
+        <div class="data-row">
+          <span class="data-label"><i class="fas fa-charging-station"></i> Voltage</span>
+          <span class="data-value" id="pzem1-voltage">--<span class="unit">V</span></span>
+        </div>
+        <div class="data-row">
+          <span class="data-label"><i class="fas fa-water"></i> Current</span>
+          <span class="data-value" id="pzem1-current">--<span class="unit">A</span></span>
+        </div>
+        <div class="data-row">
+          <span class="data-label"><i class="fas fa-gauge-high"></i> Power</span>
+          <span class="data-value" id="pzem1-power">--<span class="unit">W</span></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- PZEM 2 card -->
+    <div class="meter-card">
+      <div class="card-header">
+        <i class="fas fa-plug"></i>
+        <h2>PZEM-2 · SUB LINE</h2>
+      </div>
+      <div class="meter-data">
+        <div class="data-row">
+          <span class="data-label"><i class="fas fa-charging-station"></i> Voltage</span>
+          <span class="data-value" id="pzem2-voltage">--<span class="unit">V</span></span>
+        </div>
+        <div class="data-row">
+          <span class="data-label"><i class="fas fa-water"></i> Current</span>
+          <span class="data-value" id="pzem2-current">--<span class="unit">A</span></span>
+        </div>
+        <div class="data-row">
+          <span class="data-label"><i class="fas fa-gauge-high"></i> Power</span>
+          <span class="data-value" id="pzem2-power">--<span class="unit">W</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Theft & Differential Alert Panel -->
+  <div class="alert-panel">
+    <div class="theft-header">
+      <div class="theft-title">
+        <i class="fas fa-chart-line" style="color:#2c7da0;"></i> 
+        Power Differential (P1 - P2)
+      </div>
+      <div class="diff-big" id="power-diff-value">0.00 W</div>
+    </div>
+    <div class="theft-status-card">
+      <div class="theft-indicator">
+        <i class="fas fa-shield-hooded" style="font-size: 2rem; color:#4b6f86;"></i>
+        <div>
+          <div style="font-weight:600; margin-bottom: 5px;">Theft Detection Status</div>
+          <div class="alert-message" id="theft-msg">Monitoring power imbalance...</div>
+        </div>
+      </div>
+      <div id="theft-badge-container">
+        <div class="theft-badge safe" id="theft-badge"><i class="fas fa-check-circle"></i>  NO THEFT</div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="footer-note">
+    <span><i class="fas fa-microchip"></i> ESP32 + Firebase Realtime DB</span>
+    <span><i class="fas fa-charging-station"></i> Threshold: 100W differential &nbsp;› 5 sec → alarm</span>
+    <span><i class="fas fa-bell"></i> Relay & Buzzer active on theft</span>
+  </div>
+</div>
+
+<script>
+  // ----------------------------- FIREBASE CONFIGURATION ---------------------------------
+  // Your project credentials (directly from the Arduino code)
+  const firebaseConfig = {
+    apiKey: "AIzaSyBq8s64f19KiARlY_FTc41Z5qom5dmrPwE",
+    authDomain: "power-theft-703cc.firebaseapp.com",
+    databaseURL: "https://power-theft-703cc-default-rtdb.asia-southeast1.firebasedatabase.app/",
+    projectId: "power-theft-703cc",
+    storageBucket: "power-theft-703cc.firebasestorage.app",
+    messagingSenderId: "1070684898621",
+    appId: "1:1070684898621:web:ee1afd4ee80fdfadec8cae"
+  };
+
+  // Initialize Firebase
+  firebase.initializeApp(firebaseConfig);
+  const database = firebase.database();
+
+  // DOM elements references
+  const pzem1Voltage = document.getElementById('pzem1-voltage');
+  const pzem1Current = document.getElementById('pzem1-current');
+  const pzem1Power = document.getElementById('pzem1-power');
+  const pzem2Voltage = document.getElementById('pzem2-voltage');
+  const pzem2Current = document.getElementById('pzem2-current');
+  const pzem2Power = document.getElementById('pzem2-power');
+  const powerDiffSpan = document.getElementById('power-diff-value');
+  const theftBadge = document.getElementById('theft-badge');
+  const theftMsgSpan = document.getElementById('theft-msg');
+
+  // Helper: format numbers with 1 decimal (or 2 for current)
+  function formatVoltage(v) { return v !== undefined && !isNaN(v) ? v.toFixed(1) : '---'; }
+  function formatCurrent(c) { return c !== undefined && !isNaN(c) ? c.toFixed(2) : '---'; }
+  function formatPower(p) { return p !== undefined && !isNaN(p) ? Math.round(p) : '---'; }
+
+  // Update UI with realtime data
+  function updateUI(dataSnapshot) {
+    if (!dataSnapshot) return;
+
+    // Extract PZEM1 values
+    const p1Voltage = dataSnapshot.child('PZEM1/Voltage').val();
+    const p1Current = dataSnapshot.child('PZEM1/Current').val();
+    const p1Power = dataSnapshot.child('PZEM1/Power').val();
+
+    // Extract PZEM2 values
+    const p2Voltage = dataSnapshot.child('PZEM2/Voltage').val();
+    const p2Current = dataSnapshot.child('PZEM2/Current').val();
+    const p2Power = dataSnapshot.child('PZEM2/Power').val();
+
+    // Theft & diff status
+    const theftFlag = dataSnapshot.child('Status/Theft').val();
+    const powerDiff = dataSnapshot.child('Status/PowerDiff').val();
+
+    // Update PZEM1 section
+    if (p1Voltage !== null && p1Voltage !== undefined) pzem1Voltage.innerHTML = formatVoltage(p1Voltage) + '<span class="unit">V</span>';
+    else pzem1Voltage.innerHTML = '--<span class="unit">V</span>';
+    
+    if (p1Current !== null && p1Current !== undefined) pzem1Current.innerHTML = formatCurrent(p1Current) + '<span class="unit">A</span>';
+    else pzem1Current.innerHTML = '--<span class="unit">A</span>';
+    
+    if (p1Power !== null && p1Power !== undefined) pzem1Power.innerHTML = formatPower(p1Power) + '<span class="unit">W</span>';
+    else pzem1Power.innerHTML = '--<span class="unit">W</span>';
+
+    // Update PZEM2 section
+    if (p2Voltage !== null && p2Voltage !== undefined) pzem2Voltage.innerHTML = formatVoltage(p2Voltage) + '<span class="unit">V</span>';
+    else pzem2Voltage.innerHTML = '--<span class="unit">V</span>';
+    
+    if (p2Current !== null && p2Current !== undefined) pzem2Current.innerHTML = formatCurrent(p2Current) + '<span class="unit">A</span>';
+    else pzem2Current.innerHTML = '--<span class="unit">A</span>';
+    
+    if (p2Power !== null && p2Power !== undefined) pzem2Power.innerHTML = formatPower(p2Power) + '<span class="unit">W</span>';
+    else pzem2Power.innerHTML = '--<span class="unit">W</span>';
+
+    // Update differential display
+    if (powerDiff !== null && powerDiff !== undefined) {
+      let diffVal = typeof powerDiff === 'number' ? powerDiff : parseFloat(powerDiff);
+      if (isNaN(diffVal)) diffVal = 0;
+      powerDiffSpan.innerHTML = diffVal.toFixed(1) + ' <span style="font-size:0.9rem;">W</span>';
+    } else {
+      powerDiffSpan.innerHTML = '0.00 W';
+    }
+
+    // Update THEFT STATUS badge & message (based on firebase boolean flag)
+    if (theftFlag === true) {
+      theftBadge.className = 'theft-badge theft-active';
+      theftBadge.innerHTML = '<i class="fas fa-skull-crosswalk"></i>  THEFT DETECTED';
+      theftMsgSpan.innerHTML = '⚠️ ALERT: Power theft suspected! Relay activated, Buzzer ON. ⚠️';
+      // Optional: add a more aggressive style to panel
+      document.querySelector('.alert-panel').style.borderLeft = '4px solid #e74c3c';
+    } else {
+      theftBadge.className = 'theft-badge safe';
+      theftBadge.innerHTML = '<i class="fas fa-shield-alt"></i>  SECURE · NO THEFT';
+      theftMsgSpan.innerHTML = 'System nominal. Power difference within safe threshold.';
+      document.querySelector('.alert-panel').style.borderLeft = '4px solid #2ecc71';
+    }
+  }
+
+  // Attach Firebase Realtime Database listener: listen to whole needed paths or entire DB
+  // Using a single root listener to reduce overhead and keep sync (ESP32 updates /PZEM1, /PZEM2, /Status)
+  const dbRef = firebase.database().ref('/');
+  
+  // loading fallback: show shimmer for first load?
+  let initialLoad = true;
+  dbRef.on('value', (snapshot) => {
+    if (snapshot.exists()) {
+      updateUI(snapshot);
+      if (initialLoad) {
+        initialLoad = false;
+        // subtle effect
+        console.log('Firebase sync established — live theft monitor');
+      }
+    } else {
+      // No data yet (maybe ESP not pushed)
+      if(initialLoad){
+        pzem1Voltage.innerHTML = '--<span class="unit">V</span>';
+        pzem1Current.innerHTML = '--<span class="unit">A</span>';
+        pzem1Power.innerHTML = '--<span class="unit">W</span>';
+        pzem2Voltage.innerHTML = '--<span class="unit">V</span>';
+        pzem2Current.innerHTML = '--<span class="unit">A</span>';
+        pzem2Power.innerHTML = '--<span class="unit">W</span>';
+        powerDiffSpan.innerHTML = '0.00 W';
+        theftBadge.className = 'theft-badge safe';
+        theftBadge.innerHTML = '<i class="fas fa-hourglass-half"></i>  WAITING FOR DATA';
+        theftMsgSpan.innerHTML = 'Connecting to Firebase, waiting for ESP32 readings...';
+      }
+    }
+  }, (error) => {
+    console.error('Firebase read error:', error);
+    theftMsgSpan.innerHTML = '⚠️ Database connection issue — check network/firebase rules.';
+  });
+
+  // additionally we could also listen for specific child changed to be extra reactive, but 'value' is fine.
+  // add reconnect/visibility awareness
+  window.addEventListener('online', () => {
+    theftMsgSpan.innerHTML = 'Reconnecting to Firebase...';
+  });
+  window.addEventListener('offline', () => {
+    theftMsgSpan.innerHTML = 'Network offline — unable to sync with live database.';
+    theftBadge.className = 'theft-badge safe';
+    theftBadge.innerHTML = '<i class="fas fa-wifi-slash"></i>  OFFLINE MODE';
+  });
+
+  // optional: manual time display (last update)
+  let lastUpdateSpan = document.createElement('div');
+  lastUpdateSpan.style.fontSize = '0.7rem';
+  lastUpdateSpan.style.marginTop = '8px';
+  lastUpdateSpan.style.color = '#5c7f99';
+  lastUpdateSpan.innerHTML = '<i class="far fa-clock"></i> last sync: realtime stream';
+  document.querySelector('.theft-status-card').appendChild(lastUpdateSpan);
+  
+  // listener to show last updated timestamp from firebase server timestamp? not needed, but show current time when data changes
+  let lastTimestamp = Date.now();
+  dbRef.on('child_changed', () => {
+    lastTimestamp = Date.now();
+    let timeStr = new Date(lastTimestamp).toLocaleTimeString();
+    if(lastUpdateSpan) lastUpdateSpan.innerHTML = `<i class="far fa-clock"></i> live update · ${timeStr}`;
+  });
+  // initial set
+  setTimeout(() => {
+    if(lastUpdateSpan) lastUpdateSpan.innerHTML = `<i class="far fa-clock"></i> listening to Firebase events`;
+  }, 500);
+  
+  // add small threshold tooltip on diff limit (from code DIFF_LIMIT = 100W)
+  const diffElement = document.querySelector('.diff-big');
+  if(diffElement){
+    diffElement.setAttribute('title', 'Threshold: 100W difference for 5 seconds triggers theft alarm');
+  }
+  
+  // Additional style: make page more professional: implement animated gradient for theft state
+  // also handle invalid numbers just in case
+  console.log("⚡ PowerGuardian Dashboard Ready — waiting for ESP32 data at path: /PZEM1, /PZEM2, /Status");
+</script>
+</body>
+</html>
